@@ -18,6 +18,7 @@ var (
 	availableHashes = map[string]crypt{
 		"1": &md5crypt{},
 		"5": &sha256crypt{},
+		"6": &sha512crypt{},
 	}
 )
 

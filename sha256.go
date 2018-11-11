@@ -64,36 +64,6 @@ func (x *sha256crypt) DetectHash(slt []byte) bool {
 	return bytes.HasPrefix(slt, sha256_salt_prefix)
 }
 
-const (
-	b64t = "./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-	/* Maximum salt string length. */
-	SALT_LEN_MAX = 16
-	/* Default number of rounds if not explicitly specified. */
-	ROUNDS_DEFAULT = 5000
-	/* Minimum number of rounds. */
-	ROUNDS_MIN = 1000
-	/* Maximum number of rounds. */
-	ROUNDS_MAX = 999999999
-)
-
-func b64From24bit(B2, B1, B0 byte, n int, buffer *bytes.Buffer) {
-	w := (int(B2) << 16) | (int(B1) << 8) | int(B0)
-	for {
-		if !(n > 0) {
-			break
-		}
-		n--
-		buffer.WriteByte(byte(b64t[w&0x3f]))
-		w >>= 6
-	}
-}
-func reverse(numbers []byte) []byte {
-	newNumbers := make([]byte, len(numbers))
-	for i, j := 0, len(numbers)-1; i < j; i, j = i+1, j-1 {
-		newNumbers[i], newNumbers[j] = numbers[j], numbers[i]
-	}
-	return newNumbers
-}
 func cryptSha256(key, salt []byte) []byte {
 	buffer := bytes.NewBuffer(nil)
 	altResult := make([]byte, 32)
@@ -142,7 +112,6 @@ func cryptSha256(key, salt []byte) []byte {
 	ctx.Reset()
 
 	/* Add the key string. */
-	//SHA256_Update(&ctx, key, key_len);
 	ctx.Write(key)
 
 	/* The last part is the salt string. This must be at most 8
@@ -169,10 +138,8 @@ func cryptSha256(key, salt []byte) []byte {
 
 	/* Add for any character in the key one byte of the alternate sum. */
 	for cnt = keyLen; cnt > 32; cnt -= 32 {
-		//SHA256_Update(&ctx, alt_result, 32);
 		ctx.Write(altResult)
 	}
-	//SHA256_Update(&ctx, alt_result, cnt);
 	ctx.Write(altResult[:cnt])
 
 	/* Take the binary representation of the length of the key and for
