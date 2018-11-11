@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"crypto/md5"
 	"crypto/subtle"
+	"errors"
 	"fmt"
 )
 
@@ -28,19 +29,28 @@ type md5crypt struct{}
 // for now only md5, sha256 crypt is supported
 // __`${id}$`__*`{salt}`*__$__*`{checksum}`*
 func Verify(password string, hashWithSalt string) (bool, error) {
-	saltID := hashID([]byte(hashWithSalt))
-	saltArgs := hashSalt([]byte(hashWithSalt))
-	hash := hashHash([]byte(hashWithSalt))
+	// Just redirection to hide operations on bytes
+	return verify([]byte(password), []byte(hashWithSalt))
+}
+
+func verify(password, hashWithSalt []byte) (bool, error) {
+	saltID := extractID(hashWithSalt)
 	crypto, ok := availableHashes[string(saltID)]
 	if !ok {
-		return false, fmt.Errorf("Unsupported '%s'", saltID)
+		return false, fmt.Errorf("unsupported hash prefix '%s'", saltID)
 	}
 
-	return subtle.ConstantTimeCompare(crypto.crypt([]byte(password), saltArgs), []byte(hash)) == 1, nil
+	given := extractHash(hashWithSalt)
+	computed := extractHash(crypto.crypt(password, hashWithSalt))
+
+	if given == nil || computed == nil {
+		return false, errors.New("invalid hash")
+	}
+	return subtle.ConstantTimeCompare(computed, given) == 1, nil
 }
 
 // Return slice containing hashid, or nil if no hash id found
-func hashID(slt []byte) []byte {
+func extractID(slt []byte) []byte {
 	// minimal is $x$, so at least 3 characters just for id
 	if len(slt) < 3 {
 		return nil
@@ -52,24 +62,15 @@ func hashID(slt []byte) []byte {
 	if nextSeparator < 0 {
 		return nil
 	}
-	return slt[1:nextSeparator]
+	return slt[1 : nextSeparator+1]
 }
 
-func hashSalt(slt []byte) []byte {
+func extractHash(slt []byte) []byte {
 	lastSeparator := bytes.LastIndexByte(slt, separator)
 	if lastSeparator < 0 {
-		return nil
-	}
-	idLen := len(hashID(slt))
-	if idLen+2 < lastSeparator {
-		return nil
-	}
-	return slt[idLen+2 : lastSeparator]
-}
-func hashHash(slt []byte) []byte {
-	lastSeparator := bytes.LastIndexByte(slt, separator)
-	if lastSeparator < 0 {
-		return nil
+		// Well nobody put anything anywhere, so just asume
+		// its hash itself
+		return slt
 	}
 	return slt[lastSeparator+1:]
 }
@@ -90,9 +91,17 @@ func (x *md5crypt) crypt(pwd, slt []byte) []byte {
 
 func md5Crypt(passwd, salt []byte) []byte {
 	const (
-		itoa64      = "./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 		magicString = "$1$"
 	)
+	// if we have prefix, drop it
+	if bytes.HasPrefix(salt, []byte(magicString)) {
+		salt = salt[3:]
+	}
+	// if we got hash after salt, drop it
+	if index := bytes.Index(salt, []byte{separator}); index > 0 {
+		salt = salt[:index]
+	}
+
 	// salt is atmost 8 chars
 	if len(salt) > 8 {
 		salt = salt[:8]
@@ -161,7 +170,7 @@ func md5Crypt(passwd, salt []byte) []byte {
 
 		v := uint32(final[a])<<16 | uint32(final[b])<<8 | uint32(final[c])
 		for i := 0; i < 4; i++ {
-			rearranged[rearrangedIndex] = itoa64[v&0x3f]
+			rearranged[rearrangedIndex] = b64t[v&0x3f]
 			rearrangedIndex++
 			v >>= 6
 		}
@@ -169,7 +178,7 @@ func md5Crypt(passwd, salt []byte) []byte {
 
 	v := final[11]
 	for i := 0; i < 2; i++ {
-		rearranged[rearrangedIndex] = itoa64[v&0x3f]
+		rearranged[rearrangedIndex] = b64t[v&0x3f]
 		rearrangedIndex++
 		v >>= 6
 	}
