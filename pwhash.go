@@ -1,29 +1,90 @@
 package pwhash
 
 // md5crypt is Based on https://svnweb.freebsd.org/base/head/lib/libcrypt/crypt-md5.c?view=markup
-import "crypto/md5"
-import "strings"
-import "fmt"
-import "crypto/subtle"
+import (
+	"bytes"
+	"crypto/md5"
+	"crypto/subtle"
+	"fmt"
+)
+
+const (
+	separator = '$'
+	md5Id     = "1"
+	sha256id  = "5"
+)
+
+var (
+	availableHashes = map[string]crypt{
+		"1": &md5crypt{},
+		"5": &sha256crypt{},
+	}
+)
+
+type md5crypt struct{}
 
 // Verify if given password match hash
-// for now only md5 crypt is supported
-// __`$1$`__*`{salt}`*__$__*`{checksum}`*
+// for now only md5, sha256 crypt is supported
+// __`${id}$`__*`{salt}`*__$__*`{checksum}`*
 func Verify(password string, hashWithSalt string) (bool, error) {
-	chunks := strings.Split(hashWithSalt, "$")
-	var computedHash string
-	var hash string
-	if len(chunks) < 2 {
-		return false, fmt.Errorf("Invalid hash")
+	saltID := hashID([]byte(hashWithSalt))
+	saltArgs := hashSalt([]byte(hashWithSalt))
+	hash := hashHash([]byte(hashWithSalt))
+	crypto, ok := availableHashes[string(saltID)]
+	if !ok {
+		return false, fmt.Errorf("Unsupported '%s'", saltID)
 	}
-	switch chunks[1] {
-	case "1":
-		hash = chunks[3]
-		computedHash = string(md5Crypt([]byte(password), []byte(chunks[2])))
-	default:
-		return false, fmt.Errorf("Unsupported '%s'", chunks[1])
+
+	return subtle.ConstantTimeCompare(crypto.crypt([]byte(password), saltArgs), []byte(hash)) == 1, nil
+}
+
+// Return slice containing hashid, or nil if no hash id found
+func hashID(slt []byte) []byte {
+	// minimal is $x$, so at least 3 characters just for id
+	if len(slt) < 3 {
+		return nil
 	}
-	return subtle.ConstantTimeCompare([]byte(computedHash), []byte(hash)) == 1, nil
+	if slt[0] != separator {
+		return nil
+	}
+	nextSeparator := bytes.IndexByte(slt[1:], separator)
+	if nextSeparator < 0 {
+		return nil
+	}
+	return slt[1:nextSeparator]
+}
+
+func hashSalt(slt []byte) []byte {
+	lastSeparator := bytes.LastIndexByte(slt, separator)
+	if lastSeparator < 0 {
+		return nil
+	}
+	idLen := len(hashID(slt))
+	if idLen+2 < lastSeparator {
+		return nil
+	}
+	return slt[idLen+2 : lastSeparator]
+}
+func hashHash(slt []byte) []byte {
+	lastSeparator := bytes.LastIndexByte(slt, separator)
+	if lastSeparator < 0 {
+		return nil
+	}
+	return slt[lastSeparator+1:]
+}
+
+type crypt interface {
+	// we put CURRENTLY STORED HASH into SALT and calculate PWD hash FROM IT!
+	crypt(pwd, slt []byte) []byte
+	DetectHash(salt []byte) bool
+}
+
+func (x *md5crypt) DetectHash(slt []byte) bool {
+	return bytes.HasPrefix(slt, []byte("$1$"))
+}
+
+func (x *md5crypt) crypt(pwd, slt []byte) []byte {
+	return md5Crypt(pwd, slt)
 }
 
 func md5Crypt(passwd, salt []byte) []byte {
